@@ -22,14 +22,16 @@ class Investigation:
         self.ledger: dict[str, dict] = {}
 
     def call(self, name: str, args: dict) -> dict:
-        fn = TOOLS.get(name)
+        fn = TOOLS.get(name) if isinstance(name, str) else None
         if fn is None:
             return {"error": f"unknown tool '{name}'. Available: {sorted(TOOLS)}"}
+        if args is not None and not isinstance(args, dict):
+            return {"error": f"arguments for {name} must be an object"}
         try:
             result = fn(self, **(args or {}))
         except ToolError as e:
             return {"error": str(e)}
-        except TypeError as e:
+        except (TypeError, ValueError, OverflowError) as e:
             return {"error": f"bad arguments for {name}: {e}"}
         eid = f"E{len(self.ledger) + 1}"
         self.ledger[eid] = {"tool": name, "args": args, "result": result}
@@ -40,14 +42,24 @@ class Investigation:
         if room not in self.layout["rooms"]:
             raise ToolError(f"unknown room '{room}'. Known rooms: {sorted(self.layout['rooms'])}")
 
-    def _since(self, minutes: int) -> str:
-        return (self.sim.now - timedelta(minutes=minutes)).isoformat()
+    def _room_list(self, rooms) -> list[str]:
+        if isinstance(rooms, (str, int)):
+            rooms = [rooms]
+        if not isinstance(rooms, list) or not rooms:
+            raise ToolError("rooms must be a non-empty list of room numbers, like [\"412\"]")
+        rooms = [str(r) for r in rooms]
+        for room in rooms:
+            self._check_room(room)
+        return rooms
+
+    def _since(self, minutes: int) -> tuple[int, str]:
+        minutes = max(1, min(int(minutes), 120))
+        return minutes, (self.sim.now - timedelta(minutes=minutes)).isoformat()
 
 
 def get_layout(inv: Investigation, rooms: list[str]) -> dict:
     out = {}
-    for room in rooms:
-        inv._check_room(room)
+    for room in inv._room_list(rooms):
         spec = inv.layout["rooms"][room]
         same_ahu = [r for r, s in inv.layout["rooms"].items() if s["ahu"] == spec["ahu"] and r != room]
         out[room] = {"type": spec["type"], "air_handler": spec["ahu"],
@@ -57,12 +69,12 @@ def get_layout(inv: Investigation, rooms: list[str]) -> dict:
 
 
 def query_metrics(inv: Investigation, asset: str, minutes: int = 15) -> dict:
+    asset = str(asset)
     is_room = asset in inv.layout["rooms"]
     if not is_room and asset not in inv.layout["air_handlers"]:
         raise ToolError(f"unknown asset '{asset}'. Use a room number or an air handler id "
                         f"{sorted(inv.layout['air_handlers'])}")
-    minutes = max(1, min(int(minutes), 120))
-    since = inv._since(minutes)
+    minutes, since = inv._since(minutes)
     points = [(t, v) for t, v in inv.sim.history.get(asset, []) if t >= since]
     if not points:
         raise ToolError(f"no data for {asset} in the last {minutes} min")
@@ -84,9 +96,8 @@ def query_metrics(inv: Investigation, asset: str, minutes: int = 15) -> dict:
 
 
 def get_door_events(inv: Investigation, rooms: list[str], minutes: int = 30) -> dict:
-    for room in rooms:
-        inv._check_room(room)
-    since = inv._since(minutes)
+    rooms = inv._room_list(rooms)
+    minutes, since = inv._since(minutes)
     events = [e for e in inv.sim.door_events if e["room"] in rooms and e["ts"] >= since]
     current = {r: ("open" if inv.sim.rooms[r].reported_door_open else "closed") for r in rooms}
     return {"events": events, "current_door_sensor": current, "window_minutes": minutes}

@@ -5,6 +5,11 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026).
 
 > Everything here runs on a **simulated** hospital unit. No real hospital data, no patient data.
 
+> **Current status:** the investigator runs on the **rule-based baseline**
+> ([`labwatch/baseline.py`](labwatch/baseline.py)). The Muse Spark and open-weights model
+> clients are in progress ([`labwatch/clients.py`](labwatch/clients.py)); the investigation
+> loop, tools, and safety checks are model-agnostic and ready for them.
+
 ## The problem
 
 Isolation rooms keep airborne diseases like measles, TB, and COVID contained by holding
@@ -28,16 +33,23 @@ separate systems, often at night, while the room may be leaking.
 
 ### Safety design
 - Every claim in a report must cite real tool results (`E1`, `E2`, ...). Made-up evidence is rejected.
-- Invented actions, rooms, or equipment are rejected before anyone sees them.
+- Invented actions, rooms, or equipment are rejected before anyone sees them. Actions may only
+  target the incident's affected rooms, and a backup room must be an unaffected isolation room
+  that is in range right now.
+- **Nothing the model writes reaches staff.** Notifications contain a summary built by code from
+  validated fields plus fixed runbook wording. The model's own summary appears on the console
+  only, labeled "AI summary (for supervisor review)".
+- Malformed model output is sent back to the model to fix; a failing model call sends the
+  incident to human review instead of crashing the server.
 - Room and equipment data only. The system never handles patient information or gives medical advice.
 - Nothing is sent without human approval.
 
 ## Architecture
 
 ```
-simulator ──► detector ──► incident ──► investigator (Muse Spark) ──► report validation ──► approval ──► notifications
- (physics)    (grouping)               tools: get_layout,            (evidence + runbook)              (facilities,
-                                       query_metrics,                                                     charge nurse)
+simulator ──► detector ──► incident ──► investigator (pluggable model client) ──► report validation ──► approval ──► notifications
+ (physics)    (grouping)               tools: get_layout,                         (evidence + runbook)              (facilities,
+                                       query_metrics,                                                                  charge nurse)
                                        get_door_events, get_protocol
 ```
 
@@ -52,7 +64,7 @@ simulator ──► detector ──► incident ──► investigator (Muse Spa
 | `labwatch/agent.py` | Investigation loop with report validation and self-repair |
 | `labwatch/report.py`, `actions.py` | Evidence and runbook checks |
 | `labwatch/baseline.py` | Rule-based investigator (comparison baseline) |
-| `labwatch/clients.py` | Muse Spark and open-weights clients (to wire up) |
+| `labwatch/clients.py` | Muse Spark and open-weights clients (in progress) |
 | `labwatch/api.py` | Live server: chaos controls, incidents, approval, notifications |
 | `scripts/eval.py` | Scores investigators against ground truth |
 
@@ -87,7 +99,8 @@ curl localhost:8000/incidents
 - [x] Agent tools, evidence ledger, report and runbook validation
 - [x] Rule-based baseline + eval runner
 - [x] Live API: chaos, incidents, approval, notifications
-- [ ] Muse Spark investigator (`clients.py`)
+- [x] Hardening: non-blocking investigations, malformed-output handling, code-built notifications
+- [ ] Muse Spark investigator (`clients.py`), in progress
 - [ ] Harder scenarios (decoys, simultaneous faults)
 - [ ] Console and nurse phone page
 - [ ] PyTorch detector

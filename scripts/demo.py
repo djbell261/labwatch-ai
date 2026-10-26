@@ -29,12 +29,14 @@ for t in run["result"].trace:
     elif t["type"] == "tool":
         tag = t["evidence_id"] or f"ERROR {t['error']}"
         print(f"  [{tag}] {t['name']}({t['arguments']})")
-    else:
+    elif t["type"] == "report":
         print(f"  report check: {'passed' if not t['errors'] else t['errors']}")
+    else:
+        print(f"  format error: {t['errors']}")
 
 r = run["result"]
 print(f"\nstatus: {r.status}")
-if r.report:
+if r.status == "accepted":
     rc = r.report["root_cause"]
     print(f"root cause: {rc['category']} ({rc['asset']}) — {rc['summary']}")
     for a in r.actions:

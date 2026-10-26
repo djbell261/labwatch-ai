@@ -6,9 +6,14 @@ The model is pluggable. Any client with `next(messages, tools) -> dict` works:
   - or      {"final": <report dict>}
 `baseline.RuleBasedClient` follows fixed rules (the comparison baseline);
 `clients.py` is where the Muse Spark and open-weights clients plug in.
+
+Malformed model output never crashes the loop: it goes back to the model as a tool
+error or a validation error and counts against `max_repairs`. If the client itself
+raises (timeout, HTTP error), the investigation ends with status "model_error".
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from .report import validate_report
@@ -44,7 +49,7 @@ Report JSON:
 
 @dataclass
 class AgentResult:
-    status: str                       # accepted | rejected | max_steps
+    status: str                       # accepted | rejected | max_steps | model_error
     report: dict | None
     actions: list[dict]               # rendered runbook actions
     errors: list[str]
@@ -61,6 +66,54 @@ def incident_message(incident: dict) -> str:
     return "\n".join(lines)
 
 
+def _parse_call(call) -> tuple[str | None, dict | None, str | None]:
+    """Returns (name, arguments, error). Arguments may arrive as a JSON string."""
+    if not isinstance(call, dict):
+        return None, None, "each tool call must be an object with 'name' and 'arguments'"
+    name = call.get("name")
+    if not isinstance(name, str) or not name:
+        return None, None, "tool call is missing 'name'"
+    args = call.get("arguments")
+    if args is None:
+        args = {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args or "{}")
+        except ValueError:
+            return name, None, f"arguments for {name} are not valid JSON"
+    if not isinstance(args, dict):
+        return name, None, f"arguments for {name} must be a JSON object"
+    return name, args, None
+
+
+def _run_tool_calls(resp, inv, messages: list, trace: list) -> list[str]:
+    """Runs the response's tool calls. Returns format errors, already sent back to the model."""
+    calls = resp.get("tool_calls") if isinstance(resp, dict) else None
+    if not isinstance(calls, list) or not calls:
+        error = "Reply with tool calls or with the final report as a JSON object."
+        messages.append({"role": "user", "content": error})
+        trace.append({"type": "format_error", "errors": [error]})
+        return [error]
+
+    thought = resp.get("thought") or ""
+    messages.append({"role": "assistant", "tool_calls": calls, "content": thought})
+    if thought:
+        trace.append({"type": "thought", "text": thought})
+    errors = []
+    for c in calls:
+        name, args, error = _parse_call(c)
+        if error:
+            errors.append(error)
+            result = {"error": error}
+        else:
+            result = inv.call(name, args)
+        raw = c if isinstance(c, dict) else {}
+        messages.append({"role": "tool", "tool_call_id": raw.get("id"), "name": name, "content": result})
+        trace.append({"type": "tool", "name": name, "arguments": raw.get("arguments", c),
+                      "evidence_id": result.get("evidence_id"), "error": result.get("error")})
+    return errors
+
+
 def run_investigation(client, inv, incident: dict, max_steps: int = 12,
                       max_repairs: int = 2) -> AgentResult:
     messages = [
@@ -69,28 +122,29 @@ def run_investigation(client, inv, incident: dict, max_steps: int = 12,
     ]
     trace, repairs = [], 0
     for step in range(1, max_steps + 1):
-        resp = client.next(messages, TOOL_SCHEMAS)
-        if "final" in resp:
+        try:
+            resp = client.next(messages, TOOL_SCHEMAS)
+        except Exception as e:  # timeouts, HTTP errors, client bugs
+            return AgentResult("model_error", None, [], [f"model call failed: {type(e).__name__}: {e}"],
+                               trace, step)
+
+        report = None
+        if isinstance(resp, dict) and "final" in resp:
             report = resp["final"]
-            actions, errors = validate_report(report, inv)
+            actions, errors = validate_report(report, inv, incident["rooms"])
             trace.append({"type": "report", "errors": errors})
             if not errors:
                 return AgentResult("accepted", report, actions, [], trace, step)
-            if repairs >= max_repairs:
-                return AgentResult("rejected", report, [], errors, trace, step)
-            repairs += 1
             messages.append({"role": "assistant", "content": report})
             messages.append({"role": "user", "content":
                              "Your report failed validation. Fix these and resend:\n- " + "\n- ".join(errors)})
-            continue
+        else:
+            errors = _run_tool_calls(resp, inv, messages, trace)
+            if not errors:
+                continue
 
-        calls = resp.get("tool_calls") or []
-        messages.append({"role": "assistant", "tool_calls": calls, "content": resp.get("thought", "")})
-        if resp.get("thought"):
-            trace.append({"type": "thought", "text": resp["thought"]})
-        for c in calls:
-            result = inv.call(c["name"], c.get("arguments") or {})
-            messages.append({"role": "tool", "tool_call_id": c.get("id"), "name": c["name"], "content": result})
-            trace.append({"type": "tool", "name": c["name"], "arguments": c.get("arguments"),
-                          "evidence_id": result.get("evidence_id"), "error": result.get("error")})
+        # Failed reports and malformed output both count against max_repairs.
+        if repairs >= max_repairs:
+            return AgentResult("rejected", report if isinstance(report, dict) else None, [], errors, trace, step)
+        repairs += 1
     return AgentResult("max_steps", None, [], ["agent did not finish within the step limit"], trace, max_steps)

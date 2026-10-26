@@ -3,6 +3,9 @@
 A room is flagged when its pressure is out of its required range, or drifts far
 from its own recent normal, for several readings in a row. Flags that arrive
 close together are grouped into one incident, so one failure is one alert.
+
+Only readings close to a room's normal join its baseline, so slow drift can't drag
+the baseline along with it. After a repair, `reset_room()` starts the room fresh.
 """
 from __future__ import annotations
 
@@ -15,23 +18,38 @@ from .config import in_range
 
 class Detector:
     def __init__(self, layout: dict, baseline_ticks: int = 60, z_limit: float = 4.0,
-                 sustain: int = 3, std_floor: float = 0.2):
+                 sustain: int = 3, std_floor: float = 0.2, admit_z: float = 2.0,
+                 settle_ticks: int = 24):
         self.layout = layout
         self.z_limit, self.sustain, self.std_floor = z_limit, sustain, std_floor
+        self.admit_z, self.settle_ticks = admit_z, settle_ticks
         self.baseline = {r: deque(maxlen=baseline_ticks) for r in layout["rooms"]}
         self.streak = {r: 0 for r in layout["rooms"]}
+        self.settling = {r: 0 for r in layout["rooms"]}
         self.flagged: set[str] = set()
+
+    def reset_room(self, room: str):
+        """Start a room fresh after repair. It isn't watched for `settle_ticks` so normal
+        recovery doesn't raise an alarm; if it's still out of range after that, it is
+        flagged again as a new problem."""
+        self.baseline[room].clear()
+        self.streak[room] = 0
+        self.flagged.discard(room)
+        self.settling[room] = self.settle_ticks
+
+    def _stats(self, room: str) -> tuple[float, float] | None:
+        base = self.baseline[room]
+        if len(base) < 20:
+            return None
+        return statistics.fmean(base), max(statistics.pstdev(base), self.std_floor)
 
     def _anomalous(self, room: str, dp: float) -> tuple[bool, str]:
         kind = self.layout["rooms"][room]["type"]
         if not in_range(self.layout, kind, dp):
             return True, "out_of_range"
-        base = self.baseline[room]
-        if len(base) >= 20:
-            mean = statistics.fmean(base)
-            std = max(statistics.pstdev(base), self.std_floor)
-            if abs(dp - mean) / std > self.z_limit:
-                return True, "drift"
+        stats = self._stats(room)
+        if stats and abs(dp - stats[0]) / stats[1] > self.z_limit:
+            return True, "drift"
         return False, ""
 
     def update(self, readings: list[dict]) -> list[dict]:
@@ -41,6 +59,9 @@ class Detector:
             if r["kind"] != "room":
                 continue
             room, dp = r["asset"], r["dp_pa"]
+            if self.settling[room]:
+                self.settling[room] -= 1
+                continue
             bad, reason = self._anomalous(room, dp)
             if bad:
                 self.streak[room] += 1
@@ -50,7 +71,9 @@ class Detector:
             else:
                 self.streak[room] = 0
                 self.flagged.discard(room)
-                self.baseline[room].append(dp)
+                stats = self._stats(room)
+                if stats is None or abs(dp - stats[0]) <= self.admit_z * stats[1]:
+                    self.baseline[room].append(dp)
         return new_flags
 
 
