@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .agent import run_investigation
-from .baseline import RuleBasedClient
+from .clients import make_client as build_client
 from .config import load_layout, load_runbook
 from .detector import Detector, IncidentTracker
 from .report import staff_summary
@@ -35,6 +35,7 @@ from .tools import Investigation
 log = logging.getLogger("labwatch")
 
 SPEED = float(os.environ.get("LABWATCH_SPEED", "5"))  # 5 = simulation runs 5x faster than real time
+CLIENT = os.environ.get("LABWATCH_CLIENT", "baseline")  # baseline | muse | open | replay:<path>
 AI_SUMMARY_LABEL = "AI summary (for supervisor review)"
 
 LAYOUT, RUNBOOK = load_layout(), load_runbook()
@@ -67,8 +68,7 @@ class LockedInvestigation(Investigation):
 
 
 def make_client(layout, incident):
-    # Swap for MuseSparkClient() / OpenWeightsClient() once wired up.
-    return RuleBasedClient(layout, incident)
+    return build_client(CLIENT, layout, incident)
 
 
 def _outcome(result) -> dict:
@@ -128,6 +128,8 @@ async def _loop():
 
 @asynccontextmanager
 async def lifespan(app):
+    make_client(LAYOUT, {"rooms": []})  # fail fast on a bad LABWATCH_CLIENT or missing keys
+    log.info("investigator client: %s", CLIENT)
     for _ in range(120):  # 10 simulated minutes of history before going live
         _tick()
     task = asyncio.create_task(_loop())

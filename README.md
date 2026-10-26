@@ -64,7 +64,7 @@ simulator ──► detector ──► incident ──► investigator (pluggabl
 | `labwatch/agent.py` | Investigation loop with report validation and self-repair |
 | `labwatch/report.py`, `actions.py` | Evidence and runbook checks |
 | `labwatch/baseline.py` | Rule-based investigator (comparison baseline) |
-| `labwatch/clients.py` | Muse Spark and open-weights clients (in progress) |
+| `labwatch/clients.py` | Model clients (OpenAI-compatible), record/replay, client selection |
 | `labwatch/api.py` | Live server: chaos controls, incidents, approval, notifications |
 | `scripts/eval.py` | Scores investigators against ground truth |
 
@@ -81,6 +81,30 @@ python -m unittest discover tests         # run tests
 uvicorn labwatch.api:app --reload         # live server, docs at /docs
 curl -X POST localhost:8000/chaos/ahu_failure
 curl localhost:8000/incidents
+```
+
+## Connecting a model
+
+The investigator takes any client with `next(messages, tools)`. Pick one with `--client`
+(scripts) or `LABWATCH_CLIENT` (live server):
+
+| Client | What it uses | Config |
+|---|---|---|
+| `baseline` (default) | Rule-based investigator, no model | none |
+| `muse` | Muse Spark via the Meta Model API | `META_API_KEY`, `META_BASE_URL`, `META_MODEL` |
+| `open` | Self-hosted open weights (private mode) | `OPEN_WEIGHTS_BASE_URL`, `OPEN_WEIGHTS_MODEL`, optional `OPEN_WEIGHTS_API_KEY` |
+| `replay:<path>` | Replays a recorded session, no network | a JSONL file from `--record` |
+
+Both model clients speak the OpenAI-compatible chat-completions format with function calling
+([`labwatch/clients.py`](labwatch/clients.py)), retrying on 429, 5xx, and timeouts.
+
+```bash
+cp .env.example .env                       # fill in the keys (python-dotenv loads it if installed)
+python scripts/demo.py ahu_failure --client muse
+python scripts/demo.py ahu_failure --client muse --record evals/replays/ahu.jsonl   # demo fallback
+python scripts/demo.py ahu_failure --client replay:evals/replays/ahu.jsonl
+python scripts/eval.py --client muse --runs 5
+LABWATCH_CLIENT=muse uvicorn labwatch.api:app
 ```
 
 ## Scenarios
@@ -100,7 +124,8 @@ curl localhost:8000/incidents
 - [x] Rule-based baseline + eval runner
 - [x] Live API: chaos, incidents, approval, notifications
 - [x] Hardening: non-blocking investigations, malformed-output handling, code-built notifications
-- [ ] Muse Spark investigator (`clients.py`), in progress
+- [x] Model client adapter with record/replay, tested offline
+- [ ] Muse Spark investigator: client ready, waiting on API access
 - [ ] Harder scenarios (decoys, simultaneous faults)
 - [ ] Console and nurse phone page
 - [ ] PyTorch detector

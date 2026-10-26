@@ -32,3 +32,20 @@ Fixes for the issues in `docs/ANALYSIS.md`.
   settle period; a room still bad after that opens a new incident.
 - `POST /chaos/...` with an unknown target returns 400 instead of 500.
 - 36 unit tests (25 new).
+
+## Day 2: Tue Oct 27
+- Model client adapter (`labwatch/clients.py`): `ChatToolsClient` for any OpenAI-compatible
+  chat-completions endpoint with function calling, built on httpx. Translates our messages,
+  tool schemas, and responses; parses JSON reports, including fenced ones, and returns non-JSON
+  text as-is so validation asks for a repair. Retries 429/5xx/timeouts with exponential backoff;
+  other errors raise `ModelClientError`, which the agent turns into `model_error`. The key is never logged.
+- `MuseSparkClient` and `OpenWeightsClient` read their own env vars; `.env` is loaded if
+  python-dotenv is installed.
+- `ReplayClient` records sessions to JSONL and replays them, for deterministic demo fallbacks
+  (`demo.py --record PATH`, then `--client replay:PATH`).
+- One `make_client(name, ...)` factory for `baseline | muse | open | replay:<path>`, used by
+  `eval.py --client`, `demo.py --client`, and `LABWATCH_CLIENT` in the API. Missing config
+  fails fast with a one-line message.
+- 18 new offline tests (54 total) using `httpx.MockTransport`, including a full ahu_failure
+  investigation over a fake endpoint.
+- Muse Spark is still waiting on the API key; the next step is config only (P7).
