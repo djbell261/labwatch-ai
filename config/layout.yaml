@@ -1,0 +1,19 @@
+# Simulated hospital unit. Every name here is fictional.
+unit: "4W"
+unit_name: "4 West (simulated)"
+
+requirements:
+  isolation:  {max_dp_pa: -2.5}   # must stay at or below -2.5 Pa vs corridor
+  protective: {min_dp_pa: 2.5}    # must stay at or above +2.5 Pa vs corridor
+
+air_handlers:
+  AHU-4: {design_fan_kw: 7.5, location: "Mechanical room 4M"}
+  AHU-5: {design_fan_kw: 6.8, location: "Mechanical room 4M"}
+
+rooms:
+  "410": {type: standard,   ahu: AHU-4}
+  "412": {type: isolation,  ahu: AHU-4}
+  "414": {type: isolation,  ahu: AHU-4}
+  "418": {type: protective, ahu: AHU-4}
+  "420": {type: isolation,  ahu: AHU-5}
+  "422": {type: protective, ahu: AHU-5}

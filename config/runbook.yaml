@@ -1,0 +1,35 @@
+# The ONLY actions LabWatch may recommend. The agent picks action IDs;
+# the wording below is fixed and filled in by code, never written by the model.
+protocol: "4 West Airborne Isolation Protocol (simulated)"
+source_note: "Fictional protocol modeled on public CDC isolation guidance. Not medical advice."
+
+actions:
+  DOORS_CLOSED:
+    audience: charge_nurse
+    text: "Keep doors to {rooms} closed at all times."
+  N95_ENTRY:
+    audience: charge_nurse
+    text: "N95 respirator required to enter {rooms}."
+  LIMIT_ENTRY_PROTECTIVE:
+    audience: charge_nurse
+    text: "Limit entry to {rooms} to essential staff only."
+  PREPARE_BACKUP_ROOM:
+    audience: charge_nurse
+    text: "Prepare backup isolation room {backup_room} in case transfer is needed."
+  INSPECT_AHU:
+    audience: facilities
+    text: "Inspect air handler {asset} immediately."
+  REPLACE_SENSOR:
+    audience: facilities
+    text: "Verify and replace the pressure sensor in {rooms}."
+  CHECK_DOOR_LATCH:
+    audience: facilities
+    text: "Inspect door latch and seal on {rooms}."
+
+# Which actions are allowed for which kind of situation
+playbooks:
+  isolation_pressure_lost:  [DOORS_CLOSED, N95_ENTRY, PREPARE_BACKUP_ROOM]
+  protective_pressure_lost: [DOORS_CLOSED, LIMIT_ENTRY_PROTECTIVE]
+  air_handler_failure:      [INSPECT_AHU]
+  sensor_fault:             [REPLACE_SENSOR]
+  door_not_latching:        [CHECK_DOOR_LATCH, DOORS_CLOSED, N95_ENTRY]
