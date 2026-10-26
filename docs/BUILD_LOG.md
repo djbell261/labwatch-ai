@@ -33,7 +33,7 @@ Fixes for the issues in `docs/ANALYSIS.md`.
 - `POST /chaos/...` with an unknown target returns 400 instead of 500.
 - 36 unit tests (25 new).
 
-## Day 2: Tue Oct 27
+## Day 1: model client adapter
 - Model client adapter (`labwatch/clients.py`): `ChatToolsClient` for any OpenAI-compatible
   chat-completions endpoint with function calling, built on httpx. Translates our messages,
   tool schemas, and responses; parses JSON reports, including fenced ones, and returns non-JSON
